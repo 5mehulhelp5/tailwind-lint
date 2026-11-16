@@ -21,7 +21,9 @@ Tailwind fails silently: a class that does not exist (`flx`), a shade from the d
     the theme's `postcss.config.js`, with its options. After changing the installed modules,
     run `bin/magento hyva:config:generate`.
 - **Only new code is reported.** By default, only the lines added since `HEAD` are checked, so
-  existing code is reported once someone touches it.
+  existing code is reported once someone touches it. In an override declared in `baselines`,
+  the lines identical to its original are never checked, from its first commit on and when it
+  is synced again with a new version of the original.
 
 ## Rules
 
@@ -137,7 +139,7 @@ A Hyvä theme on Tailwind v4:
 |---|---|
 | `sites` | One per Tailwind build. `css` is the entry stylesheet. `config` is `tailwind.config.js` on v3, any file of the Tailwind folder on v4 (`hyva.config.json`). |
 | `include` / `ignore` | Globs of the files to check. `include` defaults to `**/*.{html,php,phtml,css}`; `node_modules` is always ignored. |
-| `baselines` | Maps an override to the file it was copied from, so that only the lines that differ are checked. Entries are tried in order, the first original that exists is used. |
+| `baselines` | Maps an override to the file it was copied from, so that only the lines that differ from it are checked, whether the override is untracked, staged or committed. Entries are tried in order, the first original that exists is used. |
 | `rules` | `false` disables a rule, `hint` appends advice to its message. An unknown rule or option is an error. |
 
 A template belongs to the sites whose `content` (v3) or `@source` (v4) globs cover it, a

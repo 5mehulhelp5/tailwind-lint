@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { tokenize, stripPhp, analyseTemplate, analyseCss, parseDiff, addedLineNumbers, originalOf, diffFiles } = require('../src/extract');
 
 const lines = (tokens) => tokens.map((t) => `${t.line}:${t.raw}`);
@@ -43,6 +44,57 @@ test('git failures are not mistaken for an untracked file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tailwind-lint-'));
     fs.writeFileSync(path.join(dir, 'a.phtml'), 'x\n');
     assert.throws(() => addedLineNumbers(dir, 'a.phtml', 1));
+});
+
+function overrideRepo() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tailwind-lint-'));
+    const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: dir, stdio: 'pipe' });
+    fs.mkdirSync(path.join(dir, 'parent'));
+    fs.mkdirSync(path.join(dir, 'theme'));
+    fs.writeFileSync(path.join(dir, 'parent/a.phtml'), 'a\nb\nc\nd\n');
+    git('init', '-q');
+    git('add', 'parent');
+    git('commit', '-qm', 'init');
+    return { dir, git, baselines: [{ match: /^theme\/(.+\.phtml)$/, original: 'parent/$1' }] };
+}
+
+test('a staged override is compared with its original, not with HEAD', () => {
+    const { dir, git, baselines } = overrideRepo();
+    fs.writeFileSync(path.join(dir, 'theme/a.phtml'), 'a\nB\nc\nd\n');
+    assert.deepEqual([...addedLineNumbers(dir, 'theme/a.phtml', 5, { baselines })], [2]);
+    git('add', 'theme/a.phtml');
+    assert.deepEqual([...addedLineNumbers(dir, 'theme/a.phtml', 5, { baselines })], [2]);
+});
+
+test('lines added to a committed override are reported only where they differ from its original', () => {
+    const { dir, git, baselines } = overrideRepo();
+    fs.writeFileSync(path.join(dir, 'theme/a.phtml'), 'a\nB\n');
+    git('add', 'theme');
+    git('commit', '-qm', 'override');
+    fs.writeFileSync(path.join(dir, 'theme/a.phtml'), 'a\nB\nc\nD\n');
+    assert.deepEqual([...addedLineNumbers(dir, 'theme/a.phtml', 5, { baselines })], [4]);
+});
+
+test('a file absent from HEAD has every line added, also before the first commit', () => {
+    const { dir, git } = overrideRepo();
+    fs.writeFileSync(path.join(dir, 'theme/b.phtml'), 'x\ny\n');
+    git('add', 'theme/b.phtml');
+    assert.deepEqual([...addedLineNumbers(dir, 'theme/b.phtml', 3)], [1, 2, 3]);
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'tailwind-lint-'));
+    execFileSync('git', ['init', '-q'], { cwd: fresh, stdio: 'pipe' });
+    fs.writeFileSync(path.join(fresh, 'a.phtml'), 'x\n');
+    execFileSync('git', ['add', 'a.phtml'], { cwd: fresh, stdio: 'pipe' });
+    assert.deepEqual([...addedLineNumbers(fresh, 'a.phtml', 2)], [1, 2]);
+});
+
+test('a file name with glob characters is matched literally', () => {
+    const { dir, git } = overrideRepo();
+    fs.writeFileSync(path.join(dir, 'theme/a[0-9].phtml'), 'x\n');
+    fs.writeFileSync(path.join(dir, 'theme/a1.phtml'), 'x\n');
+    git('add', 'theme');
+    git('commit', '-qm', 'globs');
+    fs.appendFileSync(path.join(dir, 'theme/a1.phtml'), 'y\n');
+    assert.deepEqual([...addedLineNumbers(dir, 'theme/a[0-9].phtml', 2)], []);
 });
 
 test('originalOf maps an override to its original through the configured baselines', () => {

@@ -420,17 +420,28 @@ function diffFiles(original, file, cwd) {
     }
 }
 
+function addedSinceHead(root, file) {
+    const git = (...args) => execFileSync('git', ['--literal-pathspecs', ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe' });
+    try {
+        git('rev-parse', '--verify', '--quiet', `HEAD:./${file}`);
+    } catch (error) {
+        if (error.status === 1) return null;
+        throw error;
+    }
+    return parseDiff(git('diff', '-U0', '--no-color', 'HEAD', '--', file));
+}
+
+// An override's lines copied from its original are never reported: neither at its first commit nor
+// when it is synced again with a new version of the original.
 function addedLineNumbers(root, file, lineCount, { all = false, baselines = [] } = {}) {
     const every = () => new Set(Array.from({ length: lineCount }, (_, index) => index + 1));
     if (all) return every();
-    try {
-        execFileSync('git', ['ls-files', '--error-unmatch', file], { cwd: root, stdio: 'pipe' });
-    } catch (error) {
-        if (error.status !== 1) throw error;
-        const original = originalOf(root, file, baselines);
-        return original ? diffFiles(original, path.resolve(root, file), root) : every();
-    }
-    return parseDiff(execFileSync('git', ['diff', '-U0', '--no-color', 'HEAD', '--', file], { cwd: root, encoding: 'utf8' }));
+    const added = addedSinceHead(root, file) ?? every();
+    if (!added.size) return added;
+    const original = originalOf(root, file, baselines);
+    if (!original) return added;
+    const changed = diffFiles(original, path.resolve(root, file), root);
+    return new Set([...added].filter((line) => changed.has(line)));
 }
 
 module.exports = { tokenize, stripPhp, analyseTemplate, analyseCss, parseDiff, addedLineNumbers, originalOf, diffFiles };
